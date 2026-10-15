@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "vex-anticheat",
+  "version": "${version}",
+  "name": "VexAntiCheat",
+  "description": "VexAntiCheat Fabric 1.21.11 - Speed/Fly/Reach/KillAura/Scaffold/Timer/Velocity/NoSlow korumasi",
+  "authors": ["Vex"],
+  "license": "MIT",
+  "icon": "assets/vex-anticheat/icon.png",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["com.vex.anticheat.VexAntiCheat"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
