@@ -12,7 +12,7 @@ public class CheckConfig {
         for (CheckType t : CheckType.values()) {
             enabled.put(t, true);
             vlAmount.put(t, 1.0);
-            vlThreshold.put(t, 10.0);
+            vlThreshold.put(t, 50.0);
         }
         vlAmount.put(CheckType.SPEED, 1.2);
         vlAmount.put(CheckType.FLY, 1.5);
@@ -39,6 +39,6 @@ public class CheckConfig {
     }
 
     public double getVlThreshold(CheckType t) {
-        return vlThreshold.getOrDefault(t, 10.0);
+        return vlThreshold.getOrDefault(t, 50.0);
     }
 }

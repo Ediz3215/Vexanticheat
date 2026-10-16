@@ -12,6 +12,7 @@ public enum CheckType {
     VELOCITY("Velocity"),
     NOSLOW("NoSlow"),
     GROUNDSPOOF("GroundSpoof"),
+    HITBOX("Hitbox"),
     HIGHJUMP("HighJump"),
     STEP("Step"),
     SPRINT("Sprint"),

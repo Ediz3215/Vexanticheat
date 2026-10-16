@@ -56,6 +56,9 @@ public class PlayerData {
 
     // giris/respawn sonrasi muafiyet icin olusturma zamani
     public final long createdAt = System.currentTimeMillis();
+    // tick suresi normalizasyonu: yavas tick'te biriken hareket tick sayisina bolunur
+    public long lastCheckMs = 0;
+    public double lastEt = 1.0;
     // muafiyet durumu degisince (creative->survival, aractan inme...) kisa muafiyet
     public boolean wasExempt = false;
     public long exemptChangeTime = 0;
@@ -64,8 +67,27 @@ public class PlayerData {
     public long bpsStart = System.currentTimeMillis();
     // ust uste isinlanma sayaci (tek seferlik pearl/tp kabul, zincir = blink)
     public int teleportStreak = 0;
+    // son yerde olunan konum (spoof setback icin)
+    public double lastGroundX, lastGroundY, lastGroundZ;
+    public float lastGroundYaw, lastGroundPitch;
+    public boolean hasGroundPos = false;
+    // velocity: saldirgan konumu + yon (KB zorlama ve projeksiyon icin)
+    public double hurtAX, hurtAZ;
+    public double hurtDirX, hurtDirZ;
+    public boolean hurtHasDir = false;
+    // velocity: uygulanan gercek KB vektoru + vurus ani hizi
+    public double kbVX, kbVY, kbVZ;
+    public double hurtSpeed = 0;
     // wind charge son kullanim (firlatma muafiyeti)
     public long lastWindTime = 0;
+    // mizrak lungu son kullanim (hizli dash toleransi)
+    public long lastSpearTime = 0;
+    // son sert dusus zamani (mace/slime toleransi)
+    public long lastBigFallMs = 0;
+    // yemek baslangici (spoof noslow penceresi icin)
+    public long lastEatStart = 0;
+    // web suphe sayaci
+    public int webBuffer = 0;
     // hasar-sonrasi knockback olcumu (velocity check)
     public double hurtX, hurtY, hurtZ;
     public long hurtTime = 0;
@@ -80,6 +102,25 @@ public class PlayerData {
     public int attackTickCount = 0;
     // omni-sprint suphe sayaci
     public int sprintBuffer = 0;
+    // sprint/blind baslangic zamanlari (blindness sonrasi sprint)
+    public long sprintStartMs = 0;
+    public long blindStartMs = 0;
+    // paket rotasyonu + bir oncekini sakla (lag toleransi icin ikisi de denenir)
+    public float pktYaw = 0;
+    public float pktPitch = 0;
+    public float pktPrevYaw = 0;
+    public float pktPrevPitch = 0;
+    public boolean pktHasRot = false;
+    // paket konumu (saldırı anı göz hesabı icin, server pozu degil)
+    public double pktX, pktY, pktZ;
+    public boolean pktHasPos = false;
+    // paket zamanlari (hiz) ve saldiri zamanlari (cps)
+    public final java.util.ArrayDeque<Long> pktTimes = new java.util.ArrayDeque<>();
+    public final java.util.ArrayDeque<Long> pktAttackTimes = new java.util.ArrayDeque<>();
+    // paket groundspoof sayaci
+    public int pktSpoof = 0;
+    // son yuksek prate zamani (tek patlama affi icin)
+    public long lastPrateTime = 0;
 
     public PlayerData(UUID uuid) {
         this.uuid = uuid;
@@ -116,6 +157,12 @@ public class PlayerData {
             riseStreak = 0;
             airBoosts = 0;
             spoofBuffer = 0;
+            lastGroundX = x;
+            lastGroundY = y;
+            lastGroundZ = z;
+            lastGroundYaw = yaw;
+            lastGroundPitch = pitch;
+            hasGroundPos = true;
         } else {
             airTicks++;
         }

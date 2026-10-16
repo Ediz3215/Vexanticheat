@@ -44,6 +44,17 @@ public class MovementChecker {
         }
 
         long now = System.currentTimeMillis();
+        // tick suresi normalizasyonu: yavas tick'te biriken cok ticklik hareket
+        // tek tick sanilip flag yememesi icin olcumler tick sayisina bolunur.
+        double et = data.lastCheckMs == 0 ? 1.0 : (now - data.lastCheckMs) / 50.0;
+        et = Math.max(1.0, Math.min(et, 5.0));
+        data.lastCheckMs = now;
+        double nDeltaXZ = deltaXZ / et;
+        double nDy = dy / et;
+        double nLastXZ = Math.sqrt(data.lastDeltaX * data.lastDeltaX
+                + data.lastDeltaZ * data.lastDeltaZ) / data.lastEt;
+        double nLastDeltaY = data.lastDeltaY / data.lastEt;
+        data.lastEt = et;
         // giris/respawn sonrasi 6sn muafiyet (yavas client yuklemesinde packetsiz tick'ler olur)
         if (now - data.createdAt < 6000) {
             data.updateLocation(x, y, z, yaw, pitch, ground);
@@ -67,38 +78,36 @@ public class MovementChecker {
         if (data.velocityPending && now - data.lastVelocityTime > 600) {
             data.velocityPending = false;
         }
+        // hasar sonrasi kisa sure knockback muafiyeti (600ms)
+        if (data.velocityPending && now - data.lastVelocityTime > 600) {
+            data.velocityPending = false;
+        }
         boolean kbGrace = data.velocityPending;
+        // sert dusus kaydi (mace smash / slime / wind burst sonrasi tolerans icin)
+        if (dy < -1.2) {
+            data.lastBigFallMs = now;
+        }
+        // dusus sonrasi 3sn hava toleransi (wind burst, slime sekmesi).
+        // Sadece havada gecerli, yere degince biter.
+        boolean fallGrace = !ground && now - data.lastBigFallMs < 3000;
         // ender pearl / chorus sonrasi isinlanma muafiyeti (5sn, uzun atislar icin)
         boolean tpGrace = now - data.lastEnderTime < 5000;
         // wind charge sonrasi firlatma muafiyeti (2.5sn)
         boolean windGrace = now - data.lastWindTime < 2500;
+        // mizrak lunge sonrasi dash muafiyeti (2sn). Sadece hizli dash'te gecerli
+        // (yavas hover bunun arkasina saklanamasin). Ham zaman ayri tutulur
+        // (dikey riptide icin).
+        boolean spearTime = now - data.lastSpearTime < 2000;
+        boolean spearGrace = spearTime && deltaXZ > 0.5;
 
-        // ---- VELOCITY olcumu (hasardan 500ms sonra konum karsilastirma) ----
-        if (data.hurtPending) {
-            if (distSq > 100.0) {
-                data.hurtPending = false;
-            } else if (now - data.hurtTime >= 500) {
-                data.hurtPending = false;
-                if (!ac.isExempt(player) && data.hurtAttackerPlayer && !data.hurtBlocking
-                        && !player.horizontalCollision) {
-                    double dispXZ = Math.sqrt((x - data.hurtX) * (x - data.hurtX)
-                            + (z - data.hurtZ) * (z - data.hurtZ));
-                    if (data.hurtAmount >= 3.0 && dispXZ < 0.25) {
-                        ac.flag(player, data, CheckType.VELOCITY, 3.0, "nokb");
-                    } else if (dispXZ > 4.5) {
-                        ac.flag(player, data, CheckType.VELOCITY, 2.0, "boost="
-                                + String.format("%.1f", dispXZ));
-                    }
-                }
-            }
-        }
+        // ---- VELOCITY olcumu onTick'te yapilir (zamaninda olcum icin) ----
 
         // ---- BPS (2 saniyelik pencerede blok/sn) ----
         // Tick-basi limitlerin altinda kalan timer/hizli speed'i yakalar.
         // Mesru azami kosu-ziplama ~7 m/s, hiz efektiyle ~9-10; esik 12.
         // Su/lav ve isinlanma sonrasi pencereye islenmez.
         boolean bpsInLiquid = player.isInWater() || player.isInLava();
-        if (!kbGrace && !tpGrace && !bpsInLiquid) {
+        if (!kbGrace && !tpGrace && !fallGrace && !spearGrace && !bpsInLiquid) {
             data.bpsDist += deltaXZ;
         }
         double bpsElapsed = (now - data.bpsStart) / 1000.0;
@@ -118,7 +127,7 @@ public class MovementChecker {
         // cok hizli paket akisi yerine tick arasi mesafe asiriligini basitce izle.
         // Su ici cok hizli olabilir, onu atla. (Yagmurda riptide sinirlama: bkz changelog)
         if (ac.getConfig().isEnabled(CheckType.TIMER)) {
-            if (deltaXZ > 1.5 && distSq < 100.0 && !kbGrace && !tpGrace
+            if (nDeltaXZ > 1.5 && distSq < 100.0 && !kbGrace && !tpGrace && !fallGrace && !spearGrace
                     && !player.isInWater()) {
                 // 1 tickte 1.5 bloktan fazla yatay hareket = timer/speed
                 ac.flag(player, data, CheckType.TIMER, 2.0, "dxz=" + String.format("%.2f", deltaXZ));
@@ -131,13 +140,12 @@ public class MovementChecker {
         // Sprint desync toleransi: hiz yuru limitini asiyorsa sprint sayilir
         // (client sprint'e basmis ama server bir tick geriden ogrenmis olabilir).
         if (ac.getConfig().isEnabled(CheckType.SPEED)) {
-            double lastXZ = Math.sqrt(data.lastDeltaX * data.lastDeltaX + data.lastDeltaZ * data.lastDeltaZ);
-            boolean sprinting = player.isSprinting() || deltaXZ > 0.27;
+            boolean sprinting = player.isSprinting() || nDeltaXZ > 0.27;
             double friction = data.onGround ? 0.91 : 0.89;
-            double momentum = lastXZ * friction + 0.12;
+            double momentum = nLastXZ * friction + 0.12;
             double cap;
             if (sprinting) {
-                cap = ground ? 0.38 : 0.75;
+                cap = ground ? 0.42 : 0.75;
             } else {
                 cap = ground ? 0.26 : 0.55;
             }
@@ -147,7 +155,7 @@ public class MovementChecker {
                 cap += 0.25;
             }
 
-            if (!kbGrace && !tpGrace && deltaXZ > cap && deltaXZ > momentum && deltaXZ < 1.5) {
+            if (!kbGrace && !tpGrace && !fallGrace && !spearGrace && nDeltaXZ > cap && nDeltaXZ > momentum && nDeltaXZ < 1.5) {
                 // yuzme/elytra disinda
                 if (!player.isInWater() && !player.isInLava()) {
                     ac.flag(player, data, CheckType.SPEED, 1.2, "dxz=" + String.format("%.3f", deltaXZ)
@@ -160,7 +168,7 @@ public class MovementChecker {
         // Normal ziplama 0.42, jump boost ile ~0.6. Ani +0.65 ustu = hile/step.
         // Slime ustunde ve wind charge ile mesru firlama olabilir -> muaf.
         boolean takeoff = data.onGround && !ground;
-        if (takeoff && !kbGrace && !tpGrace && !windGrace) {
+        if (takeoff && !kbGrace && !tpGrace && !windGrace && !fallGrace) {
             double jumpLimit = 0.62;
             var jumpEffect = player.hasEffect(net.minecraft.world.effect.MobEffects.JUMP_BOOST)
                     ? player.getEffect(net.minecraft.world.effect.MobEffects.JUMP_BOOST) : null;
@@ -168,10 +176,10 @@ public class MovementChecker {
                 jumpLimit += 0.12 * (jumpEffect.getAmplifier() + 1);
             }
             if (!isSlimeBelow(player)) {
-                if (dy > jumpLimit && dy <= 1.2) {
+                if (nDy > jumpLimit && nDy <= 1.2) {
                     ac.flag(player, data, CheckType.HIGHJUMP, 1.5,
                             "dy=" + String.format("%.2f", dy));
-                } else if (dy > 1.2 && dy <= 3.0) {
+                } else if (nDy > 1.2 && nDy <= 3.0) {
                     ac.flag(player, data, CheckType.STEP, 1.5,
                             "dy=" + String.format("%.2f", dy));
                 }
@@ -180,33 +188,60 @@ public class MovementChecker {
 
         // ---- INVENTORYMOVE (kap acikken hareket) ----
         // Sandik/firin gibi kap acikken client hareketi kilitler; yuruyen = hile.
-        if (player.containerMenu != player.inventoryMenu && deltaXZ > 0.3 && !kbGrace) {
+        if (player.containerMenu != player.inventoryMenu && nDeltaXZ > 0.3 && !kbGrace) {
             ac.flag(player, data, CheckType.INVENTORYMOVE, 1.5, "inv");
         }
 
-        // ---- NOSLOW: orumcek agi (ag yavaslatir, hizli giden = hile) ----
-        if (isInCobweb(player) && deltaXZ > 0.3 && !kbGrace) {
-            ac.flag(player, data, CheckType.NOSLOW, 1.5, "web");
+        // ---- NOWEB: ag icinde hizli hareket (LB 0.23 strafe yapar) ----
+        // Mesru ag ici ~0.1'i gecemez; giris ani buffer ile tolere edilir.
+        if (isInCobweb(player) && !kbGrace) {
+            if (nDeltaXZ > 0.18 || nDy > 0.3) {
+                data.webBuffer++;
+                if (data.webBuffer >= 3) {
+                    ac.flag(player, data, CheckType.NOSLOW, 1.5, "web");
+                }
+            } else {
+                data.webBuffer = 0;
+            }
+        } else {
+            data.webBuffer = 0;
         }
 
-        // ---- SPRINT: geriye dogru sprint (omni-sprint) ----
+        // ---- SPRINT: geriye dogru sprint (omni-sprint) + imkansiz sprint halleri ----
         // Vanilla'da sprint sadece ileriye bakarken mumkun; geriye sprint = hile.
-        // Knockback ile geriye savrulma grace ile korunur.
-        if (player.isSprinting() && deltaXZ > 0.2 && !kbGrace && !tpGrace && !windGrace) {
+        // Grim tarzi durum kontrolleri: yerken/su icerken, gizlenirken veya
+        // aclik 6 ve altiyken sprint imkansizdir. Korlukten SONRA sprint baslatmak
+        // da imkansizdir (kor olmadan once baslayan mesru). Knockback grace korur.
+        boolean blind = player.hasEffect(net.minecraft.world.effect.MobEffects.BLINDNESS);
+        if (blind && data.blindStartMs == 0) {
+            data.blindStartMs = now;
+        } else if (!blind) {
+            data.blindStartMs = 0;
+        }
+        if (player.isSprinting() && nDeltaXZ > 0.2 && !kbGrace && !tpGrace && !windGrace) {
+            if (data.sprintStartMs == 0) {
+                data.sprintStartMs = now;
+            }
             double yawRad = Math.toRadians(yaw);
             double fx = -Math.sin(yawRad);
             double fz = Math.cos(yawRad);
             double dot = (dx * fx + dz * fz) / deltaXZ;
-            if (dot < -0.3) {
+            boolean badState = player.isUsingItem() || player.isCrouching()
+                    || player.getFoodData().getFoodLevel() <= 6;
+            boolean blindSprint = blind && data.blindStartMs != 0
+                    && data.sprintStartMs >= data.blindStartMs;
+            if (dot < -0.3 || badState || blindSprint) {
                 data.sprintBuffer++;
                 if (data.sprintBuffer >= 4) {
-                    ac.flag(player, data, CheckType.SPRINT, 1.0, "omni");
+                    ac.flag(player, data, CheckType.SPRINT, 1.0,
+                            dot < -0.3 ? "omni" : (blindSprint ? "blind" : "state"));
                 }
             } else {
                 data.sprintBuffer = 0;
             }
         } else {
             data.sprintBuffer = 0;
+            data.sprintStartMs = 0;
         }
 
         // ---- FLY (gravity prediction) ----
@@ -214,7 +249,7 @@ public class MovementChecker {
         // Cakili havada (hic kipirdamama): yukleme/lag toleransi icin 40 tick = flag.
         // Yere degince buffer'lar sifirlanir.
         if (ac.getConfig().isEnabled(CheckType.FLY)) {
-            if (data.airTicks > 2 && !ground && !data.onGround && !kbGrace && !tpGrace) {
+            if (data.airTicks > 2 && !ground && !data.onGround && !kbGrace && !tpGrace && !fallGrace && !windGrace) {
                 boolean levitating = player.hasEffect(net.minecraft.world.effect.MobEffects.LEVITATION)
                         || player.hasEffect(net.minecraft.world.effect.MobEffects.SLOW_FALLING);
                 boolean stuck = isInCobweb(player) || isInPowderSnow(player) || player.getTicksFrozen() > 0;
@@ -231,9 +266,10 @@ public class MovementChecker {
                         }
                     } else {
                         data.stillTicks = 0;
-                        double expectedY = (data.lastDeltaY - 0.08) * 0.98;
-                        double diffY = Math.abs(dy - expectedY);
-                        if (diffY > 0.05 && Math.abs(dy) < 0.1) {
+                        double expectedY = (nLastDeltaY - 0.08) * 0.98;
+                        double diffY = Math.abs(nDy - expectedY);
+                        // mizrak lunge Y-kilitli dash yapar, tahmin tutmaz: hizli dash muaf
+                        if (diffY > 0.05 * et && Math.abs(nDy) < 0.1 && !spearGrace) {
                             data.flyBuffer++;
                             if (data.flyBuffer >= 4) {
                                 ac.flag(player, data, CheckType.FLY, 1.5, "dy=" + String.format("%.3f", dy)
@@ -247,8 +283,8 @@ public class MovementChecker {
                     // Ziplama/slime/patlama fizige uyar (tahmin tutar) -> flag yok.
                     // Mesru hicbir hareket dy>0.15'i surekli tutamaz (ziplama hemen sonumlenir).
                     // Jetpack/sentinel yercekimini yener (tahmin sapar) -> 5 tick ust uste = flag.
-                    double expectedClimb = (data.lastDeltaY - 0.08) * 0.98;
-                    if (dy > 0.15 && Math.abs(dy - expectedClimb) > 0.05) {
+                    double expectedClimb = (nLastDeltaY - 0.08) * 0.98;
+                    if (nDy > 0.15 && Math.abs(nDy - expectedClimb) > 0.05 * et) {
                         data.riseStreak++;
                         if (data.riseStreak >= 5) {
                             ac.flag(player, data, CheckType.FLY, 1.5, "rise="
@@ -261,9 +297,9 @@ public class MovementChecker {
                     // o yuzden havada dy'nin birden buyumesi dis destektir (Sentinel gibi
                     // 7 tick'te bir hiz sifirlayan fly'lar). Yerden kalkis ve slime sekmesi
                     // ilk 5 tick muaf (airTicks), patlama/pearl grace ile korunur.
-                    // 5sn icinde 3 boost = flag.
-                    if (data.airTicks > 5) {
-                        double boost = dy - data.lastDeltaY;
+                    // Dikey riptide/mizrak firlatmasi muaf (dy>1.0). 5sn icinde 3 boost = flag.
+                    if (data.airTicks > 5 && !(spearTime && dy > 1.0)) {
+                        double boost = nDy - nLastDeltaY;
                         if (boost > 0.12) {
                             if (now - data.lastBoostTime < 5000) {
                                 data.airBoosts++;
@@ -305,21 +341,27 @@ public class MovementChecker {
             }
         }
 
-        // ---- LIQUIDWALK (su/lav ustunde yurume) ----
+        // ---- LIQUIDWALK / Jesus (sivi USTUNDE yurume) ----
+        // Su icinde yuzen degil; su disinda ama hemen alti sivi olan ve
+        // "yerdeyim" diyen = su ustunde yuruyor. Yuzenler/batanlar muaf.
         if (ac.getConfig().isEnabled(CheckType.LIQUIDWALK)) {
-            if ((player.isInWater() || player.isInLava()) && ground && deltaXZ > 0.15) {
-                // yuzuyor degil, suyun ustunde yuruyor
-                if (player.getDeltaMovement().y >= -0.05) {
-                    ac.flag(player, data, CheckType.LIQUIDWALK, 2.0, "dxz=" + String.format("%.2f", deltaXZ));
-                }
+            if (!player.isInWater() && !player.isInLava() && ground
+                    && nDeltaXZ > 0.3 && !kbGrace && !tpGrace && !windGrace
+                    && isLiquidBelow(player)) {
+                ac.flag(player, data, CheckType.LIQUIDWALK, 2.0, "dxz=" + String.format("%.2f", deltaXZ));
             }
         }
 
-        // ---- NOSLOW (yemek/kalkan ile hizli hareket basit kontrol) ----
-        if (ac.getConfig().isEnabled(CheckType.NOSLOW)) {
+        // ---- NOSLOW: yemek yerken hizli hareket ----
+        // Yerken yurume ~0.13-0.15'i gecemez. Spoof'layanlar isUsingItem'i
+        // gizler; o yuzden yemek baslangicindan 1.6sn pencere de izlenir.
+        if (ac.getConfig().isEnabled(CheckType.NOSLOW) && ground
+                && !kbGrace && !tpGrace && !windGrace) {
             boolean usingItem = player.isUsingItem();
-            if (usingItem && ground && deltaXZ > 0.22) {
-                ac.flag(player, data, CheckType.NOSLOW, 1.0, "dxz=" + String.format("%.2f", deltaXZ));
+            if (usingItem && nDeltaXZ > 0.18) {
+                ac.flag(player, data, CheckType.NOSLOW, 1.5, "eat");
+            } else if (!usingItem && now - data.lastEatStart < 1600 && nDeltaXZ > 0.22) {
+                ac.flag(player, data, CheckType.NOSLOW, 1.5, "eatspoof");
             }
         }
 
@@ -350,8 +392,41 @@ public class MovementChecker {
         }
     }
 
-    private static boolean isSlimeBelow(ServerPlayer player) {
+    private static boolean isLiquidBelow(ServerPlayer player) {
         try {
+            var level = player.level();
+            var feet = player.blockPosition();
+            if (isLiquid(level.getBlockState(feet)) || isLiquid(level.getBlockState(feet.below()))) {
+                return true;
+            }
+            // ayaklar hava blogundaysa bir alt katmana da bak (0.5 alti)
+            var box = player.getBoundingBox();
+            int by = (int) Math.floor(box.minY - 0.5);
+            var cursor = new net.minecraft.core.BlockPos.MutableBlockPos();
+            int minBX = (int) Math.floor(box.minX - 0.3);
+            int maxBX = (int) Math.floor(box.maxX + 0.3);
+            int minBZ = (int) Math.floor(box.minZ - 0.3);
+            int maxBZ = (int) Math.floor(box.maxZ + 0.3);
+            for (int bx = minBX; bx <= maxBX; bx++) {
+                for (int bz = minBZ; bz <= maxBZ; bz++) {
+                    cursor.set(bx, by, bz);
+                    if (isLiquid(level.getBlockState(cursor))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isLiquid(net.minecraft.world.level.block.state.BlockState state) {
+        return state.is(net.minecraft.world.level.block.Blocks.WATER)
+                || state.is(net.minecraft.world.level.block.Blocks.LAVA);
+    }
+
+    private static boolean isSlimeBelow(ServerPlayer player) {        try {
             var feet = player.blockPosition();
             return player.level().getBlockState(feet.below())
                     .is(net.minecraft.world.level.block.Blocks.SLIME_BLOCK);
@@ -360,7 +435,7 @@ public class MovementChecker {
         }
     }
 
-    private static boolean isInPowderSnow(ServerPlayer player) {
+    static boolean isInPowderSnow(ServerPlayer player) {
         try {
             var level = player.level();
             var feet = player.blockPosition();
@@ -374,8 +449,8 @@ public class MovementChecker {
     }
 
     // Ayaklarin altindaki en yuksek carpisma ust yuzeyi (gercek zemin).
-    // Destek yoksa -SONSUZ doner.
-    private static double supportTop(ServerPlayer player) {
+    // Destek yoksa -SONSUZ doner. Paket katmani da kullanir.
+    static double supportTop(ServerPlayer player) {
         try {
             var level = player.level();
             var box = player.getBoundingBox();
@@ -407,7 +482,7 @@ public class MovementChecker {
         }
     }
 
-    private static boolean isInCobweb(ServerPlayer player) {
+    static boolean isInCobweb(ServerPlayer player) {
         try {
             var state = player.level().getBlockState(player.blockPosition());
             return state.is(net.minecraft.world.level.block.Blocks.COBWEB);

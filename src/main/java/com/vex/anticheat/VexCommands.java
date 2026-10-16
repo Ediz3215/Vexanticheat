@@ -29,14 +29,32 @@ public class VexCommands {
                         d.lastWindTime = System.currentTimeMillis();
                     }
                 }
+                try {
+                    var anim = stack.getUseAnimation();
+                    boolean slowingUse = anim == net.minecraft.world.item.ItemUseAnimation.EAT
+                            || anim == net.minecraft.world.item.ItemUseAnimation.DRINK
+                            || anim == net.minecraft.world.item.ItemUseAnimation.BOW
+                            || anim == net.minecraft.world.item.ItemUseAnimation.BLOCK
+                            || anim == net.minecraft.world.item.ItemUseAnimation.CROSSBOW
+                            || anim == net.minecraft.world.item.ItemUseAnimation.SPEAR;
+                    if (slowingUse && d != null) {
+                        d.lastEatStart = System.currentTimeMillis();
+                    }
+                    // mizrak + uc gozlu mizrak (trident) kullanimi: lunge/riptide toleransi
+                    if (d != null && (stack.is(net.minecraft.tags.ItemTags.SPEARS)
+                            || stack.getItem() instanceof net.minecraft.world.item.TridentItem)) {
+                        d.lastSpearTime = System.currentTimeMillis();
+                    }
+                } catch (Exception ignored) {
+                }
             }
             return InteractionResult.PASS;
         });
 
-        // blok koyma takibi (scaffold)
+        // blok koyma takibi (scaffold, asiri hizda iptal)
         UseBlockCallback.EVENT.register((player, level, hand, hitResult) -> {
             if (!level.isClientSide() && player instanceof ServerPlayer sp) {
-                CombatChecker.onPlace(sp);
+                return CombatChecker.onPlace(sp);
             }
             return InteractionResult.PASS;
         });
